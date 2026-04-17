@@ -1,0 +1,45 @@
+import requests
+
+urls = [
+    "https://github.com/",
+    "https://www.binance.com/en",
+    "https://tomtit.tomsk.ru/",
+    "https://jsonplaceholder.typicode.com/",
+    "https://moodle.tomtit-tomsk.ru/"
+]
+
+
+def check_url_status(url):
+    """Проверяет статус URL и возвращает строку с результатом"""
+    try:
+        response = requests.get(url, timeout=10, allow_redirects=True)
+
+        if response.status_code == 200:
+            status = "доступен"
+        elif response.status_code == 404:
+            status = "не доступен"
+        elif response.status_code >= 500:
+            status = "не доступен"
+        else:
+            status = "доступен" if response.status_code < 400 else "не доступен"
+
+        return f"{url} – {status} ({response.status_code})"
+
+    except requests.exceptions.Timeout:
+        return f"{url} – не доступен (таймаут)"
+    except requests.exceptions.ConnectionError:
+        return f"{url} – не доступен (ошибка соединения)"
+    except requests.exceptions.SSLError:
+        return f"{url} – не доступен (ошибка SSL)"
+    except Exception as e:
+        return f"{url} – не доступен (ошибка: {str(e)})"
+
+
+print("Результаты проверки доступности ресурсов:\n")
+print("-" * 80)
+
+for url in urls:
+    result = check_url_status(url)
+    print(result)
+
+print("-" * 80)
