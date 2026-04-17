@@ -1,0 +1,223 @@
+import socket
+import threading
+import json
+import xml.etree.ElementTree as ET
+import os
+import base64
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+
+
+def generate_key(password: str = "secret"):
+    salt = b'salt_123'
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+    )
+    key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
+    return key
+
+
+def encrypt_data(data: bytes) -> bytes:
+    f = Fernet(generate_key())
+    return f.encrypt(data)
+
+
+def decrypt_data(encrypted_data: bytes) -> bytes:
+    f = Fernet(generate_key())
+    return f.decrypt(encrypted_data)
+
+
+HOST = '127.0.0.1'
+PORT = 8888
+DATA_DIR = 'server_files'
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def validate_json(data):
+    try:
+        json.loads(data)
+        return True
+    except:
+        return False
+
+
+def validate_xml(data):
+    try:
+        ET.fromstring(data)
+        return True
+    except:
+        return False
+
+
+def handle_client(conn, addr):
+    print(f"Клиент подключен: {addr}")
+    try:
+        while True:
+            cmd = conn.recv(1024).decode()
+            if not cmd:
+                break
+
+            if cmd == "UPLOAD":
+                filename = conn.recv(1024).decode()
+                ext = conn.recv(1024).decode()
+                size = int(conn.recv(1024).decode())
+                data = b''
+                while len(data) < size:
+                    chunk = conn.recv(min(4096, size - len(data)))
+                    if not chunk:
+                        break
+                    data += chunk
+
+                data_str = data.decode('utf-8')
+                if (ext == '.json' and validate_json(data_str)) or (ext == '.xml' and validate_xml(data_str)):
+                    encrypted = encrypt_data(data)
+                    with open(os.path.join(DATA_DIR, filename + '.bin'), 'wb') as f:
+                        f.write(encrypted)
+                    conn.send(b"OK")
+                    print(f"Файл {filename}{ext} загружен")
+                else:
+                    conn.send(b"INVALID")
+
+            elif cmd == "DOWNLOAD":
+                filename = conn.recv(1024).decode()
+                filepath = os.path.join(DATA_DIR, filename)
+                if os.path.exists(filepath):
+                    size = os.path.getsize(filepath)
+                    conn.send(str(size).encode())
+                    conn.recv(1024)
+                    with open(filepath, 'rb') as f:
+                        conn.sendfile(f)
+                    print(f"Файл {filename} отправлен")
+                else:
+                    conn.send(b"-1")
+
+            elif cmd == "LIST":
+                files = [f for f in os.listdir(DATA_DIR) if f.endswith('.bin')]
+                files_list = '\n'.join(files)
+                conn.send(str(len(files_list)).encode())
+                conn.recv(1024)
+                conn.send(files_list.encode())
+
+            elif cmd == "EXIT":
+                break
+    except Exception as e:
+        print(f"Ошибка: {e}")
+    finally:
+        conn.close()
+
+
+def start_server():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((HOST, PORT))
+    server.listen(5)
+    print(f"Сервер запущен на {HOST}:{PORT}")
+    while True:
+        conn, addr = server.accept()
+        threading.Thread(target=handle_client, args=(conn, addr)).start()
+
+
+def upload_file(sock, filepath):
+    if not os.path.exists(filepath):
+        print("Файл не найден!")
+        return
+    filename = os.path.basename(filepath)
+    name, ext = os.path.splitext(filename)
+    if ext not in ['.json', '.xml']:
+        print("Только .json и .xml!")
+        return
+    with open(filepath, 'rb') as f:
+        data = f.read()
+    sock.send(b"UPLOAD")
+    sock.send(name.encode())
+    sock.send(ext.encode())
+    sock.send(str(len(data)).encode())
+    sock.send(data)
+    resp = sock.recv(1024).decode()
+    if resp == "OK":
+        print(f"✓ {filename} загружен")
+    else:
+        print(f"✗ {filename} не прошел валидацию")
+
+
+def download_file(sock, filename):
+    sock.send(b"DOWNLOAD")
+    sock.send(filename.encode())
+    size = sock.recv(1024).decode()
+    if size == "-1":
+        print("Файл не найден!")
+        return
+    sock.send(b"READY")
+    data = b''
+    while len(data) < int(size):
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    with open(f"downloaded_{filename}", 'wb') as f:
+        f.write(data)
+    print(f"✓ Файл скачан как downloaded_{filename}")
+
+
+def list_files(sock):
+    sock.send(b"LIST")
+    size = int(sock.recv(1024).decode())
+    sock.send(b"READY")
+    files = sock.recv(size).decode()
+    print("\nФайлы на сервере:")
+    for f in files.split('\n'):
+        if f:
+            print(f"  {f}")
+
+
+def start_client():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect((HOST, PORT))
+        print("Подключено к серверу\n")
+    except:
+        print("Сервер не запущен!")
+        return
+
+    while True:
+        print("\n" + "=" * 40)
+        print("1. Загрузить файл")
+        print("2. Скачать файл")
+        print("3. Список файлов")
+        print("4. Выход")
+        print("=" * 40)
+        choice = input("Выбор: ")
+
+        if choice == "1":
+            path = input("Путь к файлу: ")
+            upload_file(sock, path)
+        elif choice == "2":
+            name = input("Имя файла на сервере (.bin): ")
+            download_file(sock, name)
+        elif choice == "3":
+            list_files(sock)
+        elif choice == "4":
+            sock.send(b"EXIT")
+            print("До свидания!")
+            break
+        else:
+            print("Неверный выбор!")
+        input("\nНажмите Enter...")
+
+
+if __name__ == "__main__":
+    print("=" * 40)
+    print("1. Запустить сервер")
+    print("2. Запустить клиент")
+    print("=" * 40)
+    mode = input("Выбор: ")
+
+    if mode == "1":
+        start_server()
+    elif mode == "2":
+        start_client()
+    else:
+        print("Неверный выбор!")
