@@ -1,0 +1,31 @@
+import psutil
+import time
+import os
+
+
+def clear():
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+
+while True:
+    clear()
+
+    cpu = psutil.cpu_percent(interval=1)
+
+    ram = psutil.virtual_memory()
+
+    disk = psutil.disk_usage('/')
+
+    print("=" * 40)
+    print("     СИСТЕМНЫЙ МОНИТОР")
+    print("=" * 40)
+    print(f"CPU:     {cpu}%  {'█' * int(cpu / 4)}")
+    print(f"RAM:     {ram.percent}%  {'█' * int(ram.percent / 4)}")
+    print(f"DISK:    {disk.percent}%  {'█' * int(disk.percent / 4)}")
+    print("=" * 40)
+    print(f"RAM used: {ram.used // (1024 ** 3)}GB / {ram.total // (1024 ** 3)}GB")
+    print(f"DISK used: {disk.used // (1024 ** 3)}GB / {disk.total // (1024 ** 3)}GB")
+    print("=" * 40)
+    print("Нажми Ctrl+C для выхода")
+
+    time.sleep(2)
